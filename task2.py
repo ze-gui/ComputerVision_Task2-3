@@ -23,7 +23,7 @@ DATASET_ROOT/
   train/
     images/
     labels/
-  valid/        # or val/
+  valid/
     images/
     labels/
   test/
@@ -48,7 +48,7 @@ computed by counting only the class ids listed in BALL_CLASS_IDS.
 DATASET_ROOT = "./8-ball-pool-dataset"   # folder containing train/valid/test
 OUTPUT_DIR = "./task2_output"            # all .pth and .json files go here
 
-EPOCHS = 10
+EPOCHS = 20
 BATCH_SIZE = 16
 IMAGE_SIZE = 224
 LEARNING_RATE = 1e-4
@@ -547,32 +547,13 @@ def main():
                 torch.cuda.empty_cache()
 
     # Save comparison for all models.
-    all_results = sorted(all_results, key=lambda row: row["validation"]["mae"])
+    all_results = sorted(all_results, key=lambda row: (-row["test"]["ACC"], row["test"]["MAE"], row["test"]["RMSE"]))
     comparison_path = output_dir / "model_comparison.json"
     with open(comparison_path, "w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=2)
 
-    # Save a simple final output JSON using the model with best validation MAE.
-    # This file contains only image path and predicted total ball count.
-    best_model_info = all_results[0]
-    best_predictions_path = Path(best_model_info["test_predictions_json"])
-    with open(best_predictions_path, "r", encoding="utf-8") as f:
-        best_predictions = json.load(f)
-
-    final_output = [
-        {
-            "image": row["image"],
-            "total_balls": row["total_balls"],
-        }
-        for row in best_predictions
-    ]
-
-    final_output_path = output_dir / "final_output_best_model.json"
-    with open(final_output_path, "w", encoding="utf-8") as f:
-        json.dump(final_output, f, indent=2)
-
     print("\n" + "=" * 70)
-    print("FINAL MODEL COMPARISON, SORTED BY VALIDATION MAE")
+    print("FINAL MODEL COMPARISON, SORTED BY TEST ACCURACY, THEN MAE, THEN RMSE")
     print("=" * 70)
     for row in all_results:
         print(
@@ -586,7 +567,6 @@ def main():
     print("\nSaved files:")
     print(f"- Checkpoints: {checkpoints_dir}")
     print(f"- Comparison JSON: {comparison_path}")
-    print(f"- Final output JSON: {final_output_path}")
 
 
 if __name__ == "__main__":
