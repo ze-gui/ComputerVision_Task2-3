@@ -6,8 +6,8 @@ nc: 5
 names: ['Black', 'Cue', 'Dot', 'Solid', 'Striped']
 
 roboflow:
-  workspace: bachelorthesis
-  project: 8-ball-pool-l530o
-  version: 2
+  workspace: jose-guilherme-ze
+  project: 8-ball-pool-l530o-acknp
+  version: dataset
   license: CC BY 4.0
-  url: https://universe.roboflow.com/bachelorthesis/8-ball-pool-l530o/dataset/2
+  url: https://universe.roboflow.com/jose-guilherme-ze/8-ball-pool-l530o-acknp/dataset/dataset
