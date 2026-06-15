@@ -435,11 +435,6 @@ def main():
     print(f"Valid images: {len(valid_dataset)}")
     print(f"Test images:  {len(test_dataset)}")
 
-    # Quick sanity check: print the target count of one training image.
-    example_image = train_dataset.image_paths[0]
-    example_count = train_dataset.count_balls(example_image)
-    print(f"Example label count: {example_image.name} -> {example_count} balls")
-
     architectures = [
         "resnet18",
         "efficientnet_b0",
@@ -547,7 +542,7 @@ def main():
                 torch.cuda.empty_cache()
 
     # Save comparison for all models.
-    all_results = sorted(all_results, key=lambda row: (-row["test"]["ACC"], row["test"]["MAE"], row["test"]["RMSE"]))
+    all_results = sorted(all_results, key=lambda row: (-row["test"]["accuracy"], row["test"]["mae"], row["test"]["rmse"]))
     comparison_path = output_dir / "model_comparison.json"
     with open(comparison_path, "w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=2)
