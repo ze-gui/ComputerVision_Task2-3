@@ -47,7 +47,7 @@ be ignored. The target is therefore computed by counting only BALL_CLASS_IDS.
 DATASET_ROOT = "./8-ball-pool-dataset"
 OUTPUT_DIR = "./task2_output"
 
-EPOCHS = 20
+EPOCHS = 50
 BATCH_SIZE = 16
 IMAGE_SIZE = 224
 LEARNING_RATE = 1e-4
@@ -68,7 +68,7 @@ BALL_CLASS_IDS = {0, 1, 3, 4}
 COUNTING_MODE = "classification"   # "classification" or "regression"
 
 # Training improvements.
-PATIENCE = 5                       # early stopping after this many bad epochs
+PATIENCE = 10                      # early stopping after this many bad epochs
 FREEZE_PRETRAINED_BACKBONE = False # True = train only final layer for ImageNet models
 SAVE_PLOTS = True
 
