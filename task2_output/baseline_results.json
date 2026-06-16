@@ -1,0 +1,35 @@
+{
+  "rounded_train_mean": {
+    "loss": 0.0,
+    "mae": 3.15,
+    "rmse": 3.9937451095431715,
+    "accuracy": 0.1,
+    "within_one_accuracy": 0.3,
+    "mean_error": 1.15,
+    "median_absolute_error": 3.0,
+    "r2": -0.09041189540249528,
+    "constant_prediction": 12
+  },
+  "train_median": {
+    "loss": 0.0,
+    "mae": 3.15,
+    "rmse": 3.9937451095431715,
+    "accuracy": 0.1,
+    "within_one_accuracy": 0.3,
+    "mean_error": 1.15,
+    "median_absolute_error": 3.0,
+    "r2": -0.09041189540249528,
+    "constant_prediction": 12
+  },
+  "train_mode": {
+    "loss": 0.0,
+    "mae": 5.15,
+    "rmse": 6.41482657598785,
+    "accuracy": 0.15,
+    "within_one_accuracy": 0.2,
+    "mean_error": 5.15,
+    "median_absolute_error": 4.5,
+    "r2": -1.8131943257562808,
+    "constant_prediction": 16
+  }
+}

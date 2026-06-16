@@ -1,0 +1,162 @@
+[
+  {
+    "image": "8-ball-pool-dataset/test/images/107_png.rf.JZA5e9o7FuIwTsamNAxj.png",
+    "true_count": 14,
+    "total_balls": 9,
+    "absolute_error": 5,
+    "raw_estimate": 9.01012897491455,
+    "confidence": 0.9898710250854492
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/111_png.rf.sgd99CQW63gMPrl8XkY7.png",
+    "true_count": 16,
+    "total_balls": 13,
+    "absolute_error": 3,
+    "raw_estimate": 13.042511940002441,
+    "confidence": 0.9574880599975586
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/115_png.rf.xtuMpOQU4HuIPB3MgB1h.png",
+    "true_count": 11,
+    "total_balls": 11,
+    "absolute_error": 0,
+    "raw_estimate": 10.800134658813477,
+    "confidence": 0.8001346588134766
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/118_png.rf.zUZYNN1cWPN6CvCFbbk2.png",
+    "true_count": 10,
+    "total_balls": 13,
+    "absolute_error": 3,
+    "raw_estimate": 12.676578521728516,
+    "confidence": 0.6765785217285156
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/134_png.rf.w27nvLR57u1lyOQGi60I.png",
+    "true_count": 13,
+    "total_balls": 14,
+    "absolute_error": 1,
+    "raw_estimate": 14.137417793273926,
+    "confidence": 0.8625822067260742
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/136_png.rf.87tnvQNxn7uA7fUlln5U.png",
+    "true_count": 12,
+    "total_balls": 14,
+    "absolute_error": 2,
+    "raw_estimate": 13.661116600036621,
+    "confidence": 0.6611166000366211
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/140_png.rf.xoEBVFpw6LExxEr2QAvW.png",
+    "true_count": 8,
+    "total_balls": 12,
+    "absolute_error": 4,
+    "raw_estimate": 12.054802894592285,
+    "confidence": 0.9451971054077148
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/144_png.rf.yDqptvCa48dv81HK3o82.png",
+    "true_count": 15,
+    "total_balls": 16,
+    "absolute_error": 1,
+    "raw_estimate": 15.50338077545166,
+    "confidence": 0.5033807754516602
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/181_png.rf.w1wgoXPqTGoYV6usm0ZR.png",
+    "true_count": 16,
+    "total_balls": 10,
+    "absolute_error": 6,
+    "raw_estimate": 9.961833000183105,
+    "confidence": 0.9618330001831055
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/185_png.rf.UmZilOQfPmbr0fdrtsRu.png",
+    "true_count": 4,
+    "total_balls": 11,
+    "absolute_error": 7,
+    "raw_estimate": 11.21463394165039,
+    "confidence": 0.7853660583496094
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/1_png.rf.Qm95KroyUV8pAv4MSjLh.png",
+    "true_count": 2,
+    "total_balls": 5,
+    "absolute_error": 3,
+    "raw_estimate": 4.749624252319336,
+    "confidence": 0.7496242523193359
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/21_png.rf.CdfmdZMuqJ32aF4pweeW.png",
+    "true_count": 13,
+    "total_balls": 11,
+    "absolute_error": 2,
+    "raw_estimate": 11.316292762756348,
+    "confidence": 0.6837072372436523
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/26_png.rf.lAGxwGwaKN8qTqjxN1FH.png",
+    "true_count": 10,
+    "total_balls": 8,
+    "absolute_error": 2,
+    "raw_estimate": 7.920773506164551,
+    "confidence": 0.9207735061645508
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/27_png.rf.kWUWEdRBvWTaXxYE0T5o.png",
+    "true_count": 16,
+    "total_balls": 11,
+    "absolute_error": 5,
+    "raw_estimate": 10.526753425598145,
+    "confidence": 0.5267534255981445
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/38_png.rf.4nTRf82RMkfYhLI8zArs.png",
+    "true_count": 8,
+    "total_balls": 8,
+    "absolute_error": 0,
+    "raw_estimate": 8.491209983825684,
+    "confidence": 0.5087900161743164
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/49_png.rf.swtVgR82WyYZJogpNl3T.png",
+    "true_count": 13,
+    "total_balls": 13,
+    "absolute_error": 0,
+    "raw_estimate": 13.255776405334473,
+    "confidence": 0.7442235946655273
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/52_png.rf.cGTqbXAdBYI0mCJegLMb.png",
+    "true_count": 12,
+    "total_balls": 12,
+    "absolute_error": 0,
+    "raw_estimate": 11.636962890625,
+    "confidence": 0.636962890625
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/58_png.rf.HbuBJEibJi7oVZcf11DB.png",
+    "true_count": 8,
+    "total_balls": 8,
+    "absolute_error": 0,
+    "raw_estimate": 7.826232433319092,
+    "confidence": 0.8262324333190918
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/94_png.rf.JPgyxfh0D7PJDaSmJU7J.png",
+    "true_count": 9,
+    "total_balls": 13,
+    "absolute_error": 4,
+    "raw_estimate": 12.55683422088623,
+    "confidence": 0.5568342208862305
+  },
+  {
+    "image": "8-ball-pool-dataset/test/images/9_png.rf.mEVNq8fmua9nEY2nfkDy.png",
+    "true_count": 7,
+    "total_balls": 5,
+    "absolute_error": 2,
+    "raw_estimate": 5.449800968170166,
+    "confidence": 0.550199031829834
+  }
+]

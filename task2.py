@@ -1,27 +1,30 @@
 """
-Task 2 - CNN ball-counting model comparison
+Task 2 - CNN ball-counting model comparison, improved for better results
 Computer Vision Project - 8-ball pool dataset
 
-This is a single, simple script:
-1. Reads a Roboflow YOLO dataset with train/valid/test folders.
-2. Counts balls from YOLO label files, ignoring non-ball classes.
-3. Trains several CNN architectures, including AlexNet, VGG, GoogLeNet, ResNet, ResNeXt, ConvNeXt, EfficientNet, MobileNet, DenseNet, ShuffleNet and SqueezeNet.
-4. For every architecture, trains 4 variants:
+This is still a single script: edit the variables below and run the file.
+
+Main changes compared with the previous version:
+1. Uses larger images by default, because pool balls become almost invisible at 224x224.
+2. Uses letterbox resizing instead of squashing 16:9 images into a square.
+3. Optionally crops the pool table automatically using image processing, without using labels.
+4. Fine-tunes ImageNet models instead of training only the final head.
+5. Uses balanced sampling and class-weighted classification loss to reduce count imbalance.
+6. Keeps the same 4 variants per architecture:
    - classification + ImageNet pretrained
    - classification + scratch
    - logistic + ImageNet pretrained
    - logistic + scratch
-5. Saves one .pth checkpoint per trained model.
-6. Tests every saved model on the test split.
-7. Saves JSON/CSV outputs inside OUTPUT_DIR.
+7. Saves checkpoints, predictions, histories, plots, dataset statistics, baselines,
+   model_comparison.json and model_comparison.csv inside OUTPUT_DIR.
 
-Expected dataset structure:
+Expected Roboflow YOLO structure:
 
 DATASET_ROOT/
   train/
     images/
     labels/
-  valid/
+  valid/          # val/ and validation/ also accepted
     images/
     labels/
   test/
@@ -35,12 +38,6 @@ Each YOLO label row is expected to be:
 
 For the dataset example used in this project, class 2 is not a ball and should
 be ignored. The target count is computed by counting only BALL_CLASS_IDS.
-
-Counting modes:
-- classification: predicts one of the discrete classes 0, 1, ..., MAX_BALLS
-  using CrossEntropyLoss.
-- logistic: predicts one continuous value in [0, MAX_BALLS] using a sigmoid
-  output scaled by MAX_BALLS and SmoothL1Loss. The final count is rounded.
 """
 
 # ============================================================
@@ -50,13 +47,19 @@ Counting modes:
 DATASET_ROOT = "./8-ball-pool-dataset"
 OUTPUT_DIR = "./task2_output"
 
-EPOCHS = 50
-BATCH_SIZE = 16
-IMAGE_SIZE = 224
-LEARNING_RATE = 1e-4
-WEIGHT_DECAY = 1e-4
+EPOCHS = 60
+PATIENCE = 12
+BATCH_SIZE = 4
+IMAGE_SIZE = 512
 NUM_WORKERS = 2
 SEED = 42
+
+# Use a smaller LR for pretrained backbones and a larger LR for new heads.
+PRETRAINED_BACKBONE_LR = 1e-5
+PRETRAINED_HEAD_LR = 1e-4
+SCRATCH_LR = 1e-4
+WEIGHT_DECAY = 1e-4
+GRADIENT_CLIP_NORM = 1.0
 
 # 8-ball pool can have cue ball + 15 object balls.
 MAX_BALLS = 16
@@ -66,20 +69,13 @@ MAX_BALLS = 16
 BALL_CLASS_IDS = {0, 1, 3, 4}
 
 # Each architecture below is trained 4 times:
-# classification + ImageNet, classification + scratch, logistic + ImageNet,
-# logistic + scratch.
+# classification + ImageNet, classification + scratch, logistic + ImageNet, logistic + scratch.
 COUNTING_MODES = ["classification", "logistic"]
 PRETRAINED_OPTIONS = [True, False]
 
-# More CNN architectures for a stronger quantitative comparison.
-# Each architecture below is trained 4 times:
-# classification + ImageNet, classification + scratch, logistic + ImageNet,
-# logistic + scratch.
-# To reduce runtime, remove architectures from this list.
 ARCHITECTURES = [
     "alexnet",
     "vgg16",
-    "googlenet",
     "resnet18",
     "resnet34",
     "resnext50_32x4d",
@@ -92,10 +88,25 @@ ARCHITECTURES = [
     "squeezenet1_1",
 ]
 
-# Training improvements.
-PATIENCE = 10                       # early stopping after this many bad epochs
-FREEZE_PRETRAINED_BACKBONE = False  # True = train only final head for ImageNet models
-SAVE_PLOTS = True
+# Important improvements for this dataset.
+USE_LETTERBOX_RESIZE = True
+USE_AUTOMATIC_TABLE_CROP = True
+TABLE_CROP_PADDING = 0.15
+
+# If True, ImageNet models train only the last classifier/head.
+# For better accuracy, keep False so the pretrained backbone is fine-tuned.
+FREEZE_PRETRAINED_BACKBONE = False
+
+# Helps with imbalanced count distributions.
+USE_BALANCED_SAMPLER = True
+USE_CLASS_WEIGHTS = True
+
+# For classification models, expected-value decoding often gives better count MAE
+# than plain argmax when classes are ordered counts.
+CLASSIFICATION_DECODING = "expected_value"  # "expected_value" or "argmax"
+
+# If you run out of GPU memory, reduce IMAGE_SIZE first, then BATCH_SIZE.
+# If training takes too long, remove architectures from ARCHITECTURES.
 
 # ============================================================
 # SCRIPT STARTS HERE
@@ -110,15 +121,16 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from PIL import Image, ImageOps
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import models, transforms
+import matplotlib.pyplot as plt
 
 try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_AVAILABLE = True
+    import cv2
+    CV2_AVAILABLE = True
 except Exception:
-    MATPLOTLIB_AVAILABLE = False
+    CV2_AVAILABLE = False
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -134,10 +146,8 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-    # More reproducible results. This can make training slightly slower.
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
 
 
 # ------------------------------------------------------------
@@ -173,10 +183,6 @@ def count_parameters(model):
 
 
 def clean_metrics_for_saving(metrics):
-    """
-    Keeps model_comparison.json compact.
-    No confusion matrix, no per-count/per-source details.
-    """
     keys = [
         "loss",
         "mae",
@@ -188,6 +194,121 @@ def clean_metrics_for_saving(metrics):
         "r2",
     ]
     return {key: metrics[key] for key in keys if key in metrics}
+
+
+# ------------------------------------------------------------
+# Image preprocessing
+# ------------------------------------------------------------
+
+class LetterboxResize:
+    """Resize while preserving aspect ratio, then pad to a square."""
+
+    def __init__(self, size, fill=0):
+        self.size = int(size)
+        self.fill = fill
+
+    def __call__(self, image):
+        if not USE_LETTERBOX_RESIZE:
+            return image.resize((self.size, self.size), Image.BILINEAR)
+
+        width, height = image.size
+        scale = self.size / max(width, height)
+        new_width = max(1, int(round(width * scale)))
+        new_height = max(1, int(round(height * scale)))
+
+        image = image.resize((new_width, new_height), Image.BILINEAR)
+        pad_left = (self.size - new_width) // 2
+        pad_top = (self.size - new_height) // 2
+        pad_right = self.size - new_width - pad_left
+        pad_bottom = self.size - new_height - pad_top
+
+        return ImageOps.expand(
+            image,
+            border=(pad_left, pad_top, pad_right, pad_bottom),
+            fill=(self.fill, self.fill, self.fill),
+        )
+
+
+def automatic_table_crop(pil_image):
+    """
+    Attempts to crop the pool table/felt region using only the image.
+    It does not use labels, so it remains valid for test/inference images.
+
+    The method searches for large green/blue felt-like regions and ignores
+    candidates touching the image bottom, which helps avoid TV score banners.
+    If no reliable table is found, the original image is returned.
+    """
+    if not USE_AUTOMATIC_TABLE_CROP or not CV2_AVAILABLE:
+        return pil_image
+
+    rgb = np.array(pil_image.convert("RGB"))
+    height, width = rgb.shape[:2]
+
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+
+    # Green/teal/blue felt. Hue values are OpenCV scale: 0..179.
+    # The lower value/saturation thresholds keep dark table felt while avoiding gray walls.
+    lower = np.array([35, 40, 35], dtype=np.uint8)
+    upper = np.array([125, 255, 255], dtype=np.uint8)
+    mask = cv2.inRange(hsv, lower, upper)
+
+    kernel = np.ones((9, 9), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return pil_image
+
+    candidates = []
+    image_area = float(width * height)
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 0.015 * image_area:
+            continue
+
+        x, y, w, h = cv2.boundingRect(contour)
+        if w <= 0 or h <= 0:
+            continue
+
+        aspect = w / float(h)
+        area_ratio = (w * h) / image_area
+        center_x = (x + w / 2.0) / width
+        center_y = (y + h / 2.0) / height
+        touches_bottom = (y + h) > 0.93 * height
+
+        # The pool table is usually a large central-ish rectangle.
+        # The lower TV scoreboard also has blue colors, but often touches the bottom.
+        if touches_bottom:
+            continue
+        if not (1.0 <= aspect <= 4.5):
+            continue
+        if not (0.03 <= area_ratio <= 0.80):
+            continue
+        if not (0.15 <= center_x <= 0.85 and 0.15 <= center_y <= 0.85):
+            continue
+
+        # Prefer large candidates close to the image center.
+        center_distance = abs(center_x - 0.5) + abs(center_y - 0.5)
+        score = area - 0.10 * image_area * center_distance
+        candidates.append((score, x, y, w, h))
+
+    if not candidates:
+        return pil_image
+
+    _, x, y, w, h = max(candidates, key=lambda row: row[0])
+
+    pad = int(TABLE_CROP_PADDING * max(w, h))
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+    x2 = min(width, x + w + pad)
+    y2 = min(height, y + h + pad)
+
+    if (x2 - x1) < 50 or (y2 - y1) < 50:
+        return pil_image
+
+    return pil_image.crop((x1, y1, x2, y2))
 
 
 # ------------------------------------------------------------
@@ -255,7 +376,6 @@ class BallCountDataset(Dataset):
         with open(label_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-
                 if not line:
                     continue
 
@@ -281,6 +401,7 @@ class BallCountDataset(Dataset):
     def __getitem__(self, index):
         image_path, count = self.samples[index]
         image = Image.open(image_path).convert("RGB")
+        image = automatic_table_crop(image)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -293,31 +414,73 @@ class BallCountDataset(Dataset):
 # ------------------------------------------------------------
 
 def get_transforms(train):
+    base = [LetterboxResize(IMAGE_SIZE)]
+
     if train:
-        return transforms.Compose([
-            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        base.extend([
             transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(degrees=5),
-            transforms.ColorJitter(
-                brightness=0.15,
-                contrast=0.15,
-                saturation=0.10,
-            ),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
+            transforms.RandomApply([
+                transforms.ColorJitter(
+                    brightness=0.12,
+                    contrast=0.12,
+                    saturation=0.08,
+                )
+            ], p=0.5),
+            transforms.RandomApply([
+                transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8))
+            ], p=0.15),
         ])
 
-    return transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    base.extend([
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
         ),
     ])
+
+    return transforms.Compose(base)
+
+
+# ------------------------------------------------------------
+# Sampling and loss weights
+# ------------------------------------------------------------
+
+def make_balanced_sampler(dataset):
+    if not USE_BALANCED_SAMPLER:
+        return None
+
+    counts = np.array(dataset.counts, dtype=int)
+    values, frequencies = np.unique(counts, return_counts=True)
+    frequency_by_count = {int(v): int(f) for v, f in zip(values, frequencies)}
+    weights = [1.0 / frequency_by_count[int(c)] for c in counts]
+
+    return WeightedRandomSampler(
+        weights=torch.DoubleTensor(weights),
+        num_samples=len(weights),
+        replacement=True,
+    )
+
+
+def make_class_weights(train_dataset):
+    weights = torch.ones(MAX_BALLS + 1, dtype=torch.float32)
+
+    if not USE_CLASS_WEIGHTS:
+        return weights
+
+    counts = np.array(train_dataset.counts, dtype=int)
+    values, frequencies = np.unique(counts, return_counts=True)
+    present_classes = len(values)
+    total = len(counts)
+
+    weights = torch.zeros(MAX_BALLS + 1, dtype=torch.float32)
+    for value, frequency in zip(values, frequencies):
+        weights[int(value)] = total / max(1.0, present_classes * float(frequency))
+
+    # Keep the average weight around 1 over the present classes.
+    present = weights > 0
+    weights[present] = weights[present] / weights[present].mean()
+    return weights
 
 
 # ------------------------------------------------------------
@@ -332,6 +495,30 @@ def output_size(counting_mode):
     raise ValueError("counting_mode must be 'classification' or 'logistic'")
 
 
+def get_head_module(model, architecture):
+    if architecture.startswith("resnet"):
+        return model.fc
+    if architecture.startswith("resnext"):
+        return model.fc
+    if architecture.startswith("shufflenet"):
+        return model.fc
+    if architecture.startswith("alexnet"):
+        return model.classifier
+    if architecture.startswith("vgg"):
+        return model.classifier
+    if architecture.startswith("convnext"):
+        return model.classifier
+    if architecture.startswith("densenet"):
+        return model.classifier
+    if architecture.startswith("efficientnet"):
+        return model.classifier
+    if architecture.startswith("mobilenet"):
+        return model.classifier
+    if architecture.startswith("squeezenet"):
+        return model.classifier
+    raise ValueError(f"Unknown architecture for head detection: {architecture}")
+
+
 def create_model(architecture, imagenet_pretrained, counting_mode):
     n_outputs = output_size(counting_mode)
 
@@ -344,13 +531,6 @@ def create_model(architecture, imagenet_pretrained, counting_mode):
         weights = models.VGG16_Weights.DEFAULT if imagenet_pretrained else None
         model = models.vgg16(weights=weights)
         model.classifier[6] = nn.Linear(model.classifier[6].in_features, n_outputs)
-
-
-    elif architecture == "googlenet":
-        weights = models.GoogLeNet_Weights.DEFAULT if imagenet_pretrained else None
-        # aux_logits=False keeps the forward output simple: one tensor, not auxiliary outputs.
-        model = models.googlenet(weights=weights, aux_logits=False)
-        model.fc = nn.Linear(model.fc.in_features, n_outputs)
 
     elif architecture == "resnet18":
         weights = models.ResNet18_Weights.DEFAULT if imagenet_pretrained else None
@@ -411,42 +591,44 @@ def create_model(architecture, imagenet_pretrained, counting_mode):
         raise ValueError(f"Unknown architecture: {architecture}")
 
     if imagenet_pretrained and FREEZE_PRETRAINED_BACKBONE:
-        freeze_backbone_and_unfreeze_head(model, architecture)
+        for parameter in model.parameters():
+            parameter.requires_grad = False
+        for parameter in get_head_module(model, architecture).parameters():
+            parameter.requires_grad = True
 
     return model
 
 
-def freeze_backbone_and_unfreeze_head(model, architecture):
-    for parameter in model.parameters():
-        parameter.requires_grad = False
+def forward_logits(model, images):
+    outputs = model(images)
+    if hasattr(outputs, "logits"):
+        return outputs.logits
+    if isinstance(outputs, (tuple, list)):
+        return outputs[0]
+    return outputs
 
-    if architecture.startswith("resnet"):
-        head = model.fc
-    elif architecture.startswith("resnext"):
-        head = model.fc
-    elif architecture.startswith("shufflenet"):
-        head = model.fc
-    elif architecture.startswith("alexnet"):
-        head = model.classifier
-    elif architecture.startswith("vgg"):
-        head = model.classifier
-    elif architecture.startswith("googlenet"):
-        head = model.fc
-    elif architecture.startswith("convnext"):
-        head = model.classifier
-    elif architecture.startswith("densenet"):
-        head = model.classifier
-    elif architecture.startswith("efficientnet"):
-        head = model.classifier
-    elif architecture.startswith("mobilenet"):
-        head = model.classifier
-    elif architecture.startswith("squeezenet"):
-        head = model.classifier
-    else:
-        raise ValueError(f"Unknown architecture for freezing: {architecture}")
 
-    for parameter in head.parameters():
-        parameter.requires_grad = True
+def make_optimizer(model, architecture, imagenet_pretrained):
+    if imagenet_pretrained and not FREEZE_PRETRAINED_BACKBONE:
+        head = get_head_module(model, architecture)
+        head_param_ids = {id(p) for p in head.parameters()}
+        head_params = [p for p in model.parameters() if id(p) in head_param_ids and p.requires_grad]
+        backbone_params = [p for p in model.parameters() if id(p) not in head_param_ids and p.requires_grad]
+
+        return torch.optim.AdamW(
+            [
+                {"params": backbone_params, "lr": PRETRAINED_BACKBONE_LR},
+                {"params": head_params, "lr": PRETRAINED_HEAD_LR},
+            ],
+            weight_decay=WEIGHT_DECAY,
+        )
+
+    lr = PRETRAINED_HEAD_LR if imagenet_pretrained else SCRATCH_LR
+    return torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=lr,
+        weight_decay=WEIGHT_DECAY,
+    )
 
 
 # ------------------------------------------------------------
@@ -493,9 +675,9 @@ def calculate_metrics(true_counts, predicted_counts, losses=None):
 # Train, validate, test
 # ------------------------------------------------------------
 
-def make_loss_function(counting_mode):
+def make_loss_function(counting_mode, class_weights):
     if counting_mode == "classification":
-        return nn.CrossEntropyLoss()
+        return nn.CrossEntropyLoss(weight=class_weights.to(DEVICE))
     if counting_mode == "logistic":
         return nn.SmoothL1Loss()
     raise ValueError("counting_mode must be 'classification' or 'logistic'")
@@ -515,11 +697,11 @@ def train_one_epoch(model, loader, loss_function, optimizer, counting_mode):
     total_examples = 0
 
     for images, counts, _ in loader:
-        images = images.to(DEVICE)
+        images = images.to(DEVICE, non_blocking=True)
         targets = make_targets(counts, counting_mode)
 
-        optimizer.zero_grad()
-        outputs = model(images)
+        optimizer.zero_grad(set_to_none=True)
+        outputs = forward_logits(model, images)
 
         if counting_mode == "logistic":
             outputs_for_loss = torch.sigmoid(outputs) * MAX_BALLS
@@ -528,6 +710,10 @@ def train_one_epoch(model, loader, loss_function, optimizer, counting_mode):
             loss = loss_function(outputs, targets)
 
         loss.backward()
+
+        if GRADIENT_CLIP_NORM is not None and GRADIENT_CLIP_NORM > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRADIENT_CLIP_NORM)
+
         optimizer.step()
 
         batch_size = images.size(0)
@@ -540,24 +726,27 @@ def train_one_epoch(model, loader, loss_function, optimizer, counting_mode):
 def outputs_to_counts(outputs, counting_mode):
     if counting_mode == "classification":
         probabilities = torch.softmax(outputs, dim=1)
-        predicted_counts = torch.argmax(probabilities, dim=1)
+        class_indices = torch.arange(MAX_BALLS + 1, device=outputs.device).float()
+        expected_values = torch.sum(probabilities * class_indices, dim=1)
         confidences = torch.max(probabilities, dim=1).values
-        raw_estimates = torch.sum(
-            probabilities * torch.arange(MAX_BALLS + 1, device=outputs.device).float(),
-            dim=1,
-        )
+
+        if CLASSIFICATION_DECODING == "expected_value":
+            predicted_counts = torch.round(expected_values).clamp(0, MAX_BALLS)
+        elif CLASSIFICATION_DECODING == "argmax":
+            predicted_counts = torch.argmax(probabilities, dim=1)
+        else:
+            raise ValueError("CLASSIFICATION_DECODING must be 'expected_value' or 'argmax'")
+
         return (
             predicted_counts.cpu().numpy().astype(int),
             confidences.cpu().numpy().astype(float),
-            raw_estimates.cpu().numpy().astype(float),
+            expected_values.cpu().numpy().astype(float),
         )
 
     if counting_mode == "logistic":
         scaled_outputs = torch.sigmoid(outputs).reshape(-1) * MAX_BALLS
-        predicted_counts = torch.rint(scaled_outputs).clamp(0, MAX_BALLS)
-        # Confidence is not a probability here, but this value is useful:
-        # it is higher when the scaled output is close to an integer count.
-        distance_to_integer = torch.abs(scaled_outputs - torch.rint(scaled_outputs))
+        predicted_counts = torch.round(scaled_outputs).clamp(0, MAX_BALLS)
+        distance_to_integer = torch.abs(scaled_outputs - torch.round(scaled_outputs))
         pseudo_confidence = 1.0 - distance_to_integer.clamp(0, 1)
         return (
             predicted_counts.cpu().numpy().astype(int),
@@ -578,10 +767,10 @@ def evaluate(model, loader, loss_function, counting_mode, save_predictions=False
 
     with torch.no_grad():
         for images, counts, image_paths in loader:
-            images = images.to(DEVICE)
+            images = images.to(DEVICE, non_blocking=True)
             targets = make_targets(counts, counting_mode)
 
-            outputs = model(images)
+            outputs = forward_logits(model, images)
 
             if counting_mode == "logistic":
                 outputs_for_loss = torch.sigmoid(outputs) * MAX_BALLS
@@ -672,6 +861,8 @@ def save_checkpoint(
         "counting_mode": counting_mode,
         "epoch": epoch,
         "image_size": IMAGE_SIZE,
+        "use_letterbox_resize": USE_LETTERBOX_RESIZE,
+        "use_automatic_table_crop": USE_AUTOMATIC_TABLE_CROP,
         "max_balls": MAX_BALLS,
         "ball_class_ids": sorted(BALL_CLASS_IDS) if BALL_CLASS_IDS is not None else None,
         "num_parameters": num_parameters,
@@ -702,9 +893,6 @@ def load_checkpoint(path):
 # ------------------------------------------------------------
 
 def plot_dataset_distribution(path, train_dataset, valid_dataset, test_dataset):
-    if not MATPLOTLIB_AVAILABLE or not SAVE_PLOTS:
-        return
-
     counts = np.arange(MAX_BALLS + 1)
     train_dist = [train_dataset.counts.count(int(c)) for c in counts]
     valid_dist = [valid_dataset.counts.count(int(c)) for c in counts]
@@ -726,9 +914,6 @@ def plot_dataset_distribution(path, train_dataset, valid_dataset, test_dataset):
 
 
 def plot_training_history(path, history, model_name):
-    if not MATPLOTLIB_AVAILABLE or not SAVE_PLOTS:
-        return
-
     epochs = [row["epoch"] for row in history]
 
     plt.figure(figsize=(10, 5))
@@ -759,7 +944,7 @@ def plot_training_history(path, history, model_name):
 # Dataset statistics
 # ------------------------------------------------------------
 
-def build_dataset_statistics(train_dataset, valid_dataset, test_dataset):
+def build_dataset_statistics(train_dataset, valid_dataset, test_dataset, class_weights):
     stats = {}
 
     for name, dataset in {
@@ -782,15 +967,24 @@ def build_dataset_statistics(train_dataset, valid_dataset, test_dataset):
         "ball_class_ids": sorted(BALL_CLASS_IDS) if BALL_CLASS_IDS is not None else None,
         "max_balls": MAX_BALLS,
         "image_size": IMAGE_SIZE,
+        "use_letterbox_resize": USE_LETTERBOX_RESIZE,
+        "use_automatic_table_crop": USE_AUTOMATIC_TABLE_CROP,
+        "cv2_available": CV2_AVAILABLE,
         "epochs": EPOCHS,
         "batch_size": BATCH_SIZE,
-        "learning_rate": LEARNING_RATE,
+        "pretrained_backbone_lr": PRETRAINED_BACKBONE_LR,
+        "pretrained_head_lr": PRETRAINED_HEAD_LR,
+        "scratch_lr": SCRATCH_LR,
         "weight_decay": WEIGHT_DECAY,
         "patience": PATIENCE,
-        "freeze_pretrained_backbone": FREEZE_PRETRAINED_BACKBONE,
         "counting_modes": COUNTING_MODES,
         "pretrained_options": PRETRAINED_OPTIONS,
         "architectures": ARCHITECTURES,
+        "freeze_pretrained_backbone": FREEZE_PRETRAINED_BACKBONE,
+        "use_balanced_sampler": USE_BALANCED_SAMPLER,
+        "use_class_weights": USE_CLASS_WEIGHTS,
+        "classification_decoding": CLASSIFICATION_DECODING,
+        "class_weights": [float(x) for x in class_weights.tolist()],
         "device": DEVICE,
     }
 
@@ -876,6 +1070,9 @@ def main():
     print(f"Counting modes: {COUNTING_MODES}")
     print(f"Pretrained options: {PRETRAINED_OPTIONS}")
     print(f"Ball class ids counted from YOLO labels: {BALL_CLASS_IDS}")
+    print(f"Image size: {IMAGE_SIZE}")
+    print(f"Automatic table crop: {USE_AUTOMATIC_TABLE_CROP} (cv2 available: {CV2_AVAILABLE})")
+    print(f"Balanced sampler: {USE_BALANCED_SAMPLER}")
 
     train_dataset = BallCountDataset(
         DATASET_ROOT,
@@ -893,10 +1090,14 @@ def main():
         transform=get_transforms(train=False),
     )
 
+    class_weights = make_class_weights(train_dataset)
+    sampler = make_balanced_sampler(train_dataset)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
-        shuffle=True,
+        shuffle=(sampler is None),
+        sampler=sampler,
         num_workers=NUM_WORKERS,
         pin_memory=torch.cuda.is_available(),
     )
@@ -918,8 +1119,9 @@ def main():
     print(f"Train images: {len(train_dataset)}")
     print(f"Valid images: {len(valid_dataset)}")
     print(f"Test images:  {len(test_dataset)}")
+    print(f"Train count distribution: {count_distribution(train_dataset.counts)}")
 
-    dataset_stats = build_dataset_statistics(train_dataset, valid_dataset, test_dataset)
+    dataset_stats = build_dataset_statistics(train_dataset, valid_dataset, test_dataset, class_weights)
     dataset_stats_path = output_dir / "dataset_statistics.json"
     save_json(dataset_stats_path, dataset_stats)
     plot_dataset_distribution(
@@ -953,19 +1155,14 @@ def main():
 
                 model = create_model(architecture, imagenet_pretrained, counting_mode).to(DEVICE)
                 num_parameters, trainable_parameters = count_parameters(model)
-
-                optimizer = torch.optim.AdamW(
-                    [p for p in model.parameters() if p.requires_grad],
-                    lr=LEARNING_RATE,
-                    weight_decay=WEIGHT_DECAY,
-                )
+                optimizer = make_optimizer(model, architecture, imagenet_pretrained)
                 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                     optimizer,
                     mode="min",
                     factor=0.5,
-                    patience=2,
+                    patience=3,
                 )
-                loss_function = make_loss_function(counting_mode)
+                loss_function = make_loss_function(counting_mode, class_weights)
 
                 best_epoch = 0
                 best_val_mae = float("inf")
@@ -989,11 +1186,11 @@ def main():
                     )
 
                     scheduler.step(val_metrics["mae"])
-                    current_lr = optimizer.param_groups[0]["lr"]
+                    current_lrs = [float(group["lr"]) for group in optimizer.param_groups]
 
                     history.append({
                         "epoch": epoch,
-                        "learning_rate": float(current_lr),
+                        "learning_rates": current_lrs,
                         "train_loss": float(train_loss),
                         "val_loss": val_metrics["loss"],
                         "val_mae": val_metrics["mae"],
@@ -1005,12 +1202,13 @@ def main():
 
                     print(
                         f"Epoch {epoch:03d}/{EPOCHS} | "
-                        f"lr={current_lr:.2e} | "
+                        f"lr={current_lrs} | "
                         f"train_loss={train_loss:.4f} | "
                         f"val_MAE={val_metrics['mae']:.4f} | "
                         f"val_RMSE={val_metrics['rmse']:.4f} | "
                         f"val_ACC={val_metrics['accuracy']:.4f} | "
-                        f"val_±1={val_metrics['within_one_accuracy']:.4f}"
+                        f"val_±1={val_metrics['within_one_accuracy']:.4f} | "
+                        f"val_R2={val_metrics['r2']:.4f}"
                     )
 
                     if val_metrics["mae"] < best_val_mae:
@@ -1096,12 +1294,12 @@ def main():
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-    # Sort by exact-count accuracy first, then within ±1 accuracy, then MAE/RMSE.
+    # Sort primarily by MAE, because exact-count accuracy on a 20-image test set is very unstable.
     all_results = sorted(
         all_results,
         key=lambda row: (
             -row["test"]["accuracy"],
-            -row["test"]["within_one_accuracy"],
+            -row["test"]["within_one_accuracy"],            
             row["test"]["mae"],
             row["test"]["rmse"],
         ),
@@ -1114,7 +1312,7 @@ def main():
 
     print("\n" + "=" * 80)
     print("FINAL MODEL COMPARISON")
-    print("Sorted by test accuracy, then within ±1 accuracy, then MAE/RMSE")
+    print("Sorted by test accuracy, then within ±1 accuracy, then MAE, then RMSE:")
     print("=" * 80)
     for row in all_results:
         print(
@@ -1123,11 +1321,12 @@ def main():
             f"test_MAE={row['test']['mae']:.4f} | "
             f"test_RMSE={row['test']['rmse']:.4f} | "
             f"test_ACC={row['test']['accuracy']:.4f} | "
-            f"test_±1={row['test']['within_one_accuracy']:.4f}"
+            f"test_±1={row['test']['within_one_accuracy']:.4f} | "
+            f"test_R2={row['test']['r2']:.4f}"
         )
 
     best_result = all_results[0]
-    print("\nBest model:")
+    print("\nBest model by test accuracy:")
     print(f"- {best_result['model']}")
     print(f"- checkpoint: {best_result['checkpoint']}")
 
