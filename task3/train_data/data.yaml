@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 5
+names: ['Black', 'Cue', 'Dot', 'Solid', 'Striped']
+
+roboflow:
+  workspace: bachelorthesis
+  project: 8-ball-pool-l530o
+  version: 3
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/bachelorthesis/8-ball-pool-l530o/dataset/3
