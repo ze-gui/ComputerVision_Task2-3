@@ -16,7 +16,7 @@ Main changes compared with the previous version:
    - logistic + ImageNet pretrained
    - logistic + scratch
 7. Saves checkpoints, predictions, histories, plots, dataset statistics, baselines,
-   model_comparison.json and model_comparison.csv inside OUTPUT_DIR.
+   model_comparison.json inside OUTPUT_DIR.
 
 Expected Roboflow YOLO structure:
 
@@ -24,7 +24,7 @@ DATASET_ROOT/
   train/
     images/
     labels/
-  valid/          # val/ and validation/ also accepted
+  valid/
     images/
     labels/
   test/
@@ -48,8 +48,8 @@ DATASET_ROOT = "./8-ball-pool-dataset"
 OUTPUT_DIR = "./task2_output"
 
 EPOCHS = 60
-PATIENCE = 12
-BATCH_SIZE = 4
+PATIENCE = 10
+BATCH_SIZE = 16
 IMAGE_SIZE = 512
 NUM_WORKERS = 2
 SEED = 42
@@ -88,22 +88,13 @@ ARCHITECTURES = [
     "squeezenet1_1",
 ]
 
-# Important improvements for this dataset.
-USE_LETTERBOX_RESIZE = True
-USE_AUTOMATIC_TABLE_CROP = True
-TABLE_CROP_PADDING = 0.15
-
 # If True, ImageNet models train only the last classifier/head.
-# For better accuracy, keep False so the pretrained backbone is fine-tuned.
 FREEZE_PRETRAINED_BACKBONE = False
 
 # Helps with imbalanced count distributions.
 USE_BALANCED_SAMPLER = True
 USE_CLASS_WEIGHTS = True
 
-# For classification models, expected-value decoding often gives better count MAE
-# than plain argmax when classes are ordered counts.
-CLASSIFICATION_DECODING = "expected_value"  # "expected_value" or "argmax"
 
 # If you run out of GPU memory, reduce IMAGE_SIZE first, then BATCH_SIZE.
 # If training takes too long, remove architectures from ARCHITECTURES.
@@ -112,7 +103,6 @@ CLASSIFICATION_DECODING = "expected_value"  # "expected_value" or "argmax"
 # SCRIPT STARTS HERE
 # ============================================================
 
-import csv
 import json
 import math
 import random
@@ -125,12 +115,7 @@ from PIL import Image, ImageOps
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import models, transforms
 import matplotlib.pyplot as plt
-
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except Exception:
-    CV2_AVAILABLE = False
+import cv2
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -208,8 +193,6 @@ class LetterboxResize:
         self.fill = fill
 
     def __call__(self, image):
-        if not USE_LETTERBOX_RESIZE:
-            return image.resize((self.size, self.size), Image.BILINEAR)
 
         width, height = image.size
         scale = self.size / max(width, height)
@@ -238,8 +221,6 @@ def automatic_table_crop(pil_image):
     candidates touching the image bottom, which helps avoid TV score banners.
     If no reliable table is found, the original image is returned.
     """
-    if not USE_AUTOMATIC_TABLE_CROP or not CV2_AVAILABLE:
-        return pil_image
 
     rgb = np.array(pil_image.convert("RGB"))
     height, width = rgb.shape[:2]
@@ -299,7 +280,7 @@ def automatic_table_crop(pil_image):
 
     _, x, y, w, h = max(candidates, key=lambda row: row[0])
 
-    pad = int(TABLE_CROP_PADDING * max(w, h))
+    pad = int(0.20 * max(w, h))
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
     x2 = min(width, x + w + pad)
@@ -351,10 +332,8 @@ class BallCountDataset(Dataset):
         self.counts = [count for _, count in self.samples]
 
     def find_split_dir(self, split):
-        if split == "valid":
-            possible_names = ["valid", "val", "validation"]
-        else:
-            possible_names = [split]
+
+        possible_names = [split]
 
         for name in possible_names:
             split_dir = self.dataset_root / name
@@ -729,13 +708,7 @@ def outputs_to_counts(outputs, counting_mode):
         class_indices = torch.arange(MAX_BALLS + 1, device=outputs.device).float()
         expected_values = torch.sum(probabilities * class_indices, dim=1)
         confidences = torch.max(probabilities, dim=1).values
-
-        if CLASSIFICATION_DECODING == "expected_value":
-            predicted_counts = torch.round(expected_values).clamp(0, MAX_BALLS)
-        elif CLASSIFICATION_DECODING == "argmax":
-            predicted_counts = torch.argmax(probabilities, dim=1)
-        else:
-            raise ValueError("CLASSIFICATION_DECODING must be 'expected_value' or 'argmax'")
+        predicted_counts = torch.round(expected_values).clamp(0, MAX_BALLS)
 
         return (
             predicted_counts.cpu().numpy().astype(int),
@@ -861,8 +834,6 @@ def save_checkpoint(
         "counting_mode": counting_mode,
         "epoch": epoch,
         "image_size": IMAGE_SIZE,
-        "use_letterbox_resize": USE_LETTERBOX_RESIZE,
-        "use_automatic_table_crop": USE_AUTOMATIC_TABLE_CROP,
         "max_balls": MAX_BALLS,
         "ball_class_ids": sorted(BALL_CLASS_IDS) if BALL_CLASS_IDS is not None else None,
         "num_parameters": num_parameters,
@@ -965,83 +936,10 @@ def build_dataset_statistics(train_dataset, valid_dataset, test_dataset, class_w
     stats["configuration"] = {
         "dataset_root": str(DATASET_ROOT),
         "ball_class_ids": sorted(BALL_CLASS_IDS) if BALL_CLASS_IDS is not None else None,
-        "max_balls": MAX_BALLS,
-        "image_size": IMAGE_SIZE,
-        "use_letterbox_resize": USE_LETTERBOX_RESIZE,
-        "use_automatic_table_crop": USE_AUTOMATIC_TABLE_CROP,
-        "cv2_available": CV2_AVAILABLE,
-        "epochs": EPOCHS,
-        "batch_size": BATCH_SIZE,
-        "pretrained_backbone_lr": PRETRAINED_BACKBONE_LR,
-        "pretrained_head_lr": PRETRAINED_HEAD_LR,
-        "scratch_lr": SCRATCH_LR,
-        "weight_decay": WEIGHT_DECAY,
-        "patience": PATIENCE,
-        "counting_modes": COUNTING_MODES,
-        "pretrained_options": PRETRAINED_OPTIONS,
-        "architectures": ARCHITECTURES,
-        "freeze_pretrained_backbone": FREEZE_PRETRAINED_BACKBONE,
-        "use_balanced_sampler": USE_BALANCED_SAMPLER,
-        "use_class_weights": USE_CLASS_WEIGHTS,
-        "classification_decoding": CLASSIFICATION_DECODING,
         "class_weights": [float(x) for x in class_weights.tolist()],
-        "device": DEVICE,
     }
 
     return stats
-
-
-# ------------------------------------------------------------
-# Save comparison CSV
-# ------------------------------------------------------------
-
-def save_comparison_csv(path, rows):
-    fieldnames = [
-        "model",
-        "architecture",
-        "counting_mode",
-        "imagenet_pretrained",
-        "checkpoint",
-        "best_epoch",
-        "num_parameters",
-        "trainable_parameters",
-        "val_mae",
-        "val_rmse",
-        "val_accuracy",
-        "val_within_one_accuracy",
-        "test_mae",
-        "test_rmse",
-        "test_accuracy",
-        "test_within_one_accuracy",
-        "test_r2",
-        "test_mean_error",
-    ]
-
-    with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for row in rows:
-            writer.writerow({
-                "model": row["model"],
-                "architecture": row["architecture"],
-                "counting_mode": row["counting_mode"],
-                "imagenet_pretrained": row["imagenet_pretrained"],
-                "checkpoint": row["checkpoint"],
-                "best_epoch": row["best_epoch"],
-                "num_parameters": row["num_parameters"],
-                "trainable_parameters": row["trainable_parameters"],
-                "val_mae": row["validation"]["mae"],
-                "val_rmse": row["validation"]["rmse"],
-                "val_accuracy": row["validation"]["accuracy"],
-                "val_within_one_accuracy": row["validation"]["within_one_accuracy"],
-                "test_mae": row["test"]["mae"],
-                "test_rmse": row["test"]["rmse"],
-                "test_accuracy": row["test"]["accuracy"],
-                "test_within_one_accuracy": row["test"]["within_one_accuracy"],
-                "test_r2": row["test"]["r2"],
-                "test_mean_error": row["test"]["mean_error"],
-            })
 
 
 # ------------------------------------------------------------
@@ -1071,8 +969,6 @@ def main():
     print(f"Pretrained options: {PRETRAINED_OPTIONS}")
     print(f"Ball class ids counted from YOLO labels: {BALL_CLASS_IDS}")
     print(f"Image size: {IMAGE_SIZE}")
-    print(f"Automatic table crop: {USE_AUTOMATIC_TABLE_CROP} (cv2 available: {CV2_AVAILABLE})")
-    print(f"Balanced sampler: {USE_BALANCED_SAMPLER}")
 
     train_dataset = BallCountDataset(
         DATASET_ROOT,
@@ -1294,21 +1190,19 @@ def main():
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-    # Sort primarily by MAE, because exact-count accuracy on a 20-image test set is very unstable.
     all_results = sorted(
         all_results,
-        key=lambda row: (
-            -row["test"]["accuracy"],
-            -row["test"]["within_one_accuracy"],            
+        key=lambda row: (         
             row["test"]["mae"],
             row["test"]["rmse"],
+            -row["test"]["accuracy"],
+            -row["test"]["within_one_accuracy"],   
+            row["test"]["r2"]
         ),
     )
 
     comparison_path = output_dir / "model_comparison.json"
-    comparison_csv_path = output_dir / "model_comparison.csv"
     save_json(comparison_path, all_results)
-    save_comparison_csv(comparison_csv_path, all_results)
 
     print("\n" + "=" * 80)
     print("FINAL MODEL COMPARISON")
@@ -1338,7 +1232,6 @@ def main():
     print(f"- Predictions: {predictions_dir}")
     print(f"- Plots: {plots_dir}")
     print(f"- Comparison JSON: {comparison_path}")
-    print(f"- Comparison CSV: {comparison_csv_path}")
 
 
 if __name__ == "__main__":
