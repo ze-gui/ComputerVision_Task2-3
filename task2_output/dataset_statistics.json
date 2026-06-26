@@ -85,44 +85,6 @@
       3,
       4
     ],
-    "max_balls": 16,
-    "image_size": 512,
-    "use_letterbox_resize": true,
-    "use_automatic_table_crop": true,
-    "cv2_available": false,
-    "epochs": 60,
-    "batch_size": 4,
-    "pretrained_backbone_lr": 1e-05,
-    "pretrained_head_lr": 0.0001,
-    "scratch_lr": 0.0001,
-    "weight_decay": 0.0001,
-    "patience": 12,
-    "counting_modes": [
-      "classification",
-      "logistic"
-    ],
-    "pretrained_options": [
-      true,
-      false
-    ],
-    "architectures": [
-      "alexnet",
-      "vgg16",
-      "resnet18",
-      "resnet34",
-      "resnext50_32x4d",
-      "convnext_tiny",
-      "efficientnet_b0",
-      "mobilenet_v2",
-      "mobilenet_v3_large",
-      "densenet121",
-      "shufflenet_v2_x1_0",
-      "squeezenet1_1"
-    ],
-    "freeze_pretrained_backbone": false,
-    "use_balanced_sampler": true,
-    "use_class_weights": true,
-    "classification_decoding": "expected_value",
     "class_weights": [
       0.0,
       0.0,
@@ -141,7 +103,6 @@
       0.203033447265625,
       0.2186514139175415,
       0.18338505923748016
-    ],
-    "device": "cuda"
+    ]
   }
 }
