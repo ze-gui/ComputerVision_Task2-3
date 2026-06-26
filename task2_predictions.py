@@ -1,6 +1,6 @@
-MODEL_PATH = "./task2_output/checkpoints/resnet18_classification_imagenet.pth"
-INPUT_JSON = "./task2_predictions_example/input.json"
-OUTPUT_JSON = "./task2_predictions_example/output.json"
+MODEL_PATH = "task2_output/checkpoints/vgg16_logistic_imagenet.pth"
+INPUT_JSON = "task2_predictions/input.json"
+OUTPUT_JSON = "task2_predictions/output.json"
 
 BATCH_SIZE = 16
 NUM_WORKERS = 2
