@@ -1,49 +1,3 @@
-"""
-Task 2 - CNN ball-counting model comparison, improved for better results
-Computer Vision Project - 8-ball pool dataset
-
-This is still a single script: edit the variables below and run the file.
-
-Main changes compared with the previous version:
-1. Uses larger images by default, because pool balls become almost invisible at 224x224.
-2. Uses letterbox resizing instead of squashing 16:9 images into a square.
-3. Optionally crops the pool table automatically using image processing, without using labels.
-4. Fine-tunes ImageNet models instead of training only the final head.
-5. Uses balanced sampling and class-weighted classification loss to reduce count imbalance.
-6. Keeps the same 4 variants per architecture:
-   - classification + ImageNet pretrained
-   - classification + scratch
-   - logistic + ImageNet pretrained
-   - logistic + scratch
-7. Saves checkpoints, predictions, histories, plots, dataset statistics, baselines,
-   model_comparison.json inside OUTPUT_DIR.
-
-Expected Roboflow YOLO structure:
-
-DATASET_ROOT/
-  train/
-    images/
-    labels/
-  valid/
-    images/
-    labels/
-  test/
-    images/
-    labels/
-  data.yaml
-
-Each YOLO label row is expected to be:
-
-    class_id x_center y_center width height
-
-For the dataset example used in this project, class 2 is not a ball and should
-be ignored. The target count is computed by counting only BALL_CLASS_IDS.
-"""
-
-# ============================================================
-# EDIT ONLY THESE VARIABLES
-# ============================================================
-
 DATASET_ROOT = "./8-ball-pool-dataset"
 OUTPUT_DIR = "./task2_output"
 
@@ -64,12 +18,10 @@ GRADIENT_CLIP_NORM = 1.0
 # 8-ball pool can have cue ball + 15 object balls.
 MAX_BALLS = 16
 
-# Your uploaded example label has 26 rows, but only classes 0, 1, 3, 4 are balls.
-# Class 2 appears to be table/rail/keypoint annotations, so it is ignored.
+# Only classes 0, 1, 3, 4 are balls.
 BALL_CLASS_IDS = {0, 1, 3, 4}
 
-# Each architecture below is trained 4 times:
-# classification + ImageNet, classification + scratch, logistic + ImageNet, logistic + scratch.
+# Each architecture below is trained 4 times: classification + ImageNet, classification + scratch, logistic + ImageNet, logistic + scratch.
 COUNTING_MODES = ["classification", "logistic"]
 PRETRAINED_OPTIONS = [True, False]
 
@@ -90,18 +42,9 @@ ARCHITECTURES = [
 
 # If True, ImageNet models train only the last classifier/head.
 FREEZE_PRETRAINED_BACKBONE = False
-
-# Helps with imbalanced count distributions.
 USE_BALANCED_SAMPLER = True
 USE_CLASS_WEIGHTS = True
 
-
-# If you run out of GPU memory, reduce IMAGE_SIZE first, then BATCH_SIZE.
-# If training takes too long, remove architectures from ARCHITECTURES.
-
-# ============================================================
-# SCRIPT STARTS HERE
-# ============================================================
 
 import json
 import math
@@ -122,10 +65,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
-# ------------------------------------------------------------
-# Reproducibility
-# ------------------------------------------------------------
-
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -134,10 +73,6 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
-
-# ------------------------------------------------------------
-# Small utilities
-# ------------------------------------------------------------
 
 def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
@@ -181,12 +116,9 @@ def clean_metrics_for_saving(metrics):
     return {key: metrics[key] for key in keys if key in metrics}
 
 
-# ------------------------------------------------------------
-# Image preprocessing
-# ------------------------------------------------------------
+
 
 class LetterboxResize:
-    """Resize while preserving aspect ratio, then pad to a square."""
 
     def __init__(self, size, fill=0):
         self.size = int(size)
@@ -213,14 +145,6 @@ class LetterboxResize:
 
 
 def automatic_table_crop(pil_image):
-    """
-    Attempts to crop the pool table/felt region using only the image.
-    It does not use labels, so it remains valid for test/inference images.
-
-    The method searches for large green/blue felt-like regions and ignores
-    candidates touching the image bottom, which helps avoid TV score banners.
-    If no reliable table is found, the original image is returned.
-    """
 
     rgb = np.array(pil_image.convert("RGB"))
     height, width = rgb.shape[:2]
@@ -292,11 +216,10 @@ def automatic_table_crop(pil_image):
     return pil_image.crop((x1, y1, x2, y2))
 
 
-# ------------------------------------------------------------
-# Dataset
-# ------------------------------------------------------------
+
 
 class BallCountDataset(Dataset):
+
     def __init__(self, dataset_root, split, transform=None):
         self.dataset_root = Path(dataset_root)
         self.split_name = split
@@ -388,9 +311,7 @@ class BallCountDataset(Dataset):
         return image, torch.tensor(count, dtype=torch.long), str(image_path)
 
 
-# ------------------------------------------------------------
-# Image transforms
-# ------------------------------------------------------------
+
 
 def get_transforms(train):
     base = [LetterboxResize(IMAGE_SIZE)]
@@ -421,11 +342,10 @@ def get_transforms(train):
     return transforms.Compose(base)
 
 
-# ------------------------------------------------------------
-# Sampling and loss weights
-# ------------------------------------------------------------
+
 
 def make_balanced_sampler(dataset):
+    
     if not USE_BALANCED_SAMPLER:
         return None
 
@@ -462,11 +382,10 @@ def make_class_weights(train_dataset):
     return weights
 
 
-# ------------------------------------------------------------
-# Models
-# ------------------------------------------------------------
+
 
 def output_size(counting_mode):
+
     if counting_mode == "classification":
         return MAX_BALLS + 1
     if counting_mode == "logistic":
@@ -579,6 +498,7 @@ def create_model(architecture, imagenet_pretrained, counting_mode):
 
 
 def forward_logits(model, images):
+
     outputs = model(images)
     if hasattr(outputs, "logits"):
         return outputs.logits
@@ -588,6 +508,7 @@ def forward_logits(model, images):
 
 
 def make_optimizer(model, architecture, imagenet_pretrained):
+
     if imagenet_pretrained and not FREEZE_PRETRAINED_BACKBONE:
         head = get_head_module(model, architecture)
         head_param_ids = {id(p) for p in head.parameters()}
@@ -610,11 +531,10 @@ def make_optimizer(model, architecture, imagenet_pretrained):
     )
 
 
-# ------------------------------------------------------------
-# Metrics
-# ------------------------------------------------------------
+
 
 def calculate_metrics(true_counts, predicted_counts, losses=None):
+
     true_counts = np.array(true_counts, dtype=int)
     predicted_counts = np.array(predicted_counts, dtype=int)
 
@@ -650,11 +570,10 @@ def calculate_metrics(true_counts, predicted_counts, losses=None):
     }
 
 
-# ------------------------------------------------------------
-# Train, validate, test
-# ------------------------------------------------------------
+
 
 def make_loss_function(counting_mode, class_weights):
+
     if counting_mode == "classification":
         return nn.CrossEntropyLoss(weight=class_weights.to(DEVICE))
     if counting_mode == "logistic":
@@ -663,6 +582,7 @@ def make_loss_function(counting_mode, class_weights):
 
 
 def make_targets(counts, counting_mode):
+
     if counting_mode == "classification":
         return counts.to(DEVICE)
     if counting_mode == "logistic":
@@ -671,6 +591,7 @@ def make_targets(counts, counting_mode):
 
 
 def train_one_epoch(model, loader, loss_function, optimizer, counting_mode):
+
     model.train()
     total_loss = 0.0
     total_examples = 0
@@ -703,6 +624,7 @@ def train_one_epoch(model, loader, loss_function, optimizer, counting_mode):
 
 
 def outputs_to_counts(outputs, counting_mode):
+
     if counting_mode == "classification":
         probabilities = torch.softmax(outputs, dim=1)
         class_indices = torch.arange(MAX_BALLS + 1, device=outputs.device).float()
@@ -785,11 +707,10 @@ def evaluate(model, loader, loss_function, counting_mode, save_predictions=False
     return metrics
 
 
-# ------------------------------------------------------------
-# Baselines
-# ------------------------------------------------------------
+
 
 def evaluate_constant_baseline(train_dataset, test_dataset):
+
     train_counts = np.array(train_dataset.counts, dtype=int)
     test_counts = np.array(test_dataset.counts, dtype=int)
 
@@ -813,9 +734,7 @@ def evaluate_constant_baseline(train_dataset, test_dataset):
     return baselines
 
 
-# ------------------------------------------------------------
-# Save/load checkpoints
-# ------------------------------------------------------------
+
 
 def save_checkpoint(
     path,
@@ -844,6 +763,7 @@ def save_checkpoint(
 
 
 def load_checkpoint(path):
+
     try:
         checkpoint = torch.load(path, map_location=DEVICE, weights_only=False)
     except TypeError:
@@ -859,11 +779,10 @@ def load_checkpoint(path):
     return model, checkpoint
 
 
-# ------------------------------------------------------------
-# Plots
-# ------------------------------------------------------------
+
 
 def plot_dataset_distribution(path, train_dataset, valid_dataset, test_dataset):
+    
     counts = np.arange(MAX_BALLS + 1)
     train_dist = [train_dataset.counts.count(int(c)) for c in counts]
     valid_dist = [valid_dataset.counts.count(int(c)) for c in counts]
@@ -911,9 +830,7 @@ def plot_training_history(path, history, model_name):
     plt.close()
 
 
-# ------------------------------------------------------------
-# Dataset statistics
-# ------------------------------------------------------------
+
 
 def build_dataset_statistics(train_dataset, valid_dataset, test_dataset, class_weights):
     stats = {}
@@ -942,9 +859,7 @@ def build_dataset_statistics(train_dataset, valid_dataset, test_dataset, class_w
     return stats
 
 
-# ------------------------------------------------------------
-# Main script
-# ------------------------------------------------------------
+
 
 def main():
     set_seed(SEED)
