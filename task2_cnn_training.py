@@ -1,5 +1,5 @@
 DATASET_ROOT = "./8-ball-pool-dataset"
-OUTPUT_DIR = "./task2_output"
+OUTPUT_DIR = "./task2_training_output"
 
 EPOCHS = 60
 PATIENCE = 10
